@@ -3,7 +3,6 @@ use super::BalesDecompress;
 use crate::archive::utils::*;
 use anyhow::Context;
 use anyhow::Result;
-use ewsc::error;
 use ewsc::success;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::Cursor;

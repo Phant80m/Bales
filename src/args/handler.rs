@@ -14,8 +14,12 @@ impl Arguments {
             } => {
                 let compress = BalesCompress::parse(input, output, force)?.match_type()?;
             }
-            Subcommands::UnPackage { input, output } => {
-                let decompress = BalesDecompress::parse(input, output)?.match_type()?;
+            Subcommands::UnPackage { url, input, output } => {
+                if !url {
+                    let decompress = BalesDecompress::parse(input, output)?.match_type()?;
+                } else {
+                    BalesDecompress::parse_url(input, output)?;
+                }
             }
         }
         Ok(())

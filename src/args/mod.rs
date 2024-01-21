@@ -24,6 +24,8 @@ enum Subcommands {
     /// extract the contents of a tar / zip
     #[clap(name = "extract")]
     UnPackage {
+        #[arg(long, short)]
+        url: bool,
         input: PathBuf,
         #[arg(short, long)]
         output: Option<PathBuf>,

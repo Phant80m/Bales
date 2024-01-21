@@ -8,4 +8,5 @@ pub enum BalesError {
     FileExists(PathBuf, String),
     NoFileExists(PathBuf, String),
     UnknownArchiveType(String),
+    RelativeUrlWithoutBase(String),
 }

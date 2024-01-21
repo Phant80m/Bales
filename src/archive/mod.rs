@@ -5,11 +5,14 @@ use crate::error::BalesError;
 use anyhow::Result;
 use std::path::PathBuf;
 use strum_macros::{EnumString, EnumVariantNames};
+use url::Url;
+// compress
 pub struct BalesCompress {
     pub input: Vec<PathBuf>,
     pub output: PathBuf,
     pub archive: Archive,
 }
+
 #[derive(Debug, EnumString, EnumVariantNames)]
 pub enum Archive {
     #[strum(serialize = ".tar.gz")]
@@ -24,11 +27,37 @@ pub struct BalesDecompress {
     pub output: PathBuf,
     pub archive: Archive,
 }
+pub struct BalesUrlDecompress {
+    pub input: Url,
+    pub output: PathBuf,
+}
 impl BalesDecompress {
+    pub fn parse_url(
+        input: PathBuf,
+        output: Option<PathBuf>,
+    ) -> Result<BalesUrlDecompress, BalesError> {
+        // valid url checks
+
+        let input = input.display().to_string();
+        let url = Url::parse(&input);
+        if url.is_err() {
+            if let Err(err) = url {
+                println!("{}", err);
+                if err == url::ParseError::RelativeUrlWithoutBase {
+                    return Err(BalesError::RelativeUrlWithoutBase(input));
+                }
+            }
+        }
+        Ok(BalesUrlDecompress {
+            input: url.unwrap(),
+            output: output.unwrap(),
+        })
+    }
     pub fn parse(input: PathBuf, output: Option<PathBuf>) -> Result<Self, BalesError> {
         // check input validity
 
         // generate assumed output for example input = foo.tar.gz -> output: ./foo/
+
         let file_stem_str = input
             .file_stem()
             .expect("file has no name!")
