@@ -19,5 +19,6 @@ term_size = "0.3.2"
 thiserror = "1.0.56"
 walkdir = "2.4.0"
 zip = "0.6.6"
+zip-extract = "0.1.2"
 
 
