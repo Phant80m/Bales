@@ -6,24 +6,46 @@ impl fmt::Display for BalesError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use owo_colors::OwoColorize;
         match self {
-            Self::NoFileExtension((input, output)) => {
-                let cmd = format!(
-                    "{} bales pkg {} -o {}",
-                    "x".red().bold(),
-                    input,
-                    output.underline().red()
-                );
-                let fixed_cmd = format!(
-                    "{} bales pkg {} -o {}",
-                    "".green().bold(),
-                    input,
-                    (output.to_owned() + ".tar.gz").underline().green()
-                );
+            Self::NoFileExtension((input, output, command)) => {
+                let cmd = if command == "pkg" {
+                    format!(
+                        "{} bales {} {} -o {}",
+                        "x".red().bold(),
+                        command,
+                        input,
+                        output.underline().red()
+                    )
+                } else {
+                    format!(
+                        "{} bales {} {} -o {}",
+                        "x".red().bold(),
+                        command,
+                        input.underline().red(),
+                        output
+                    )
+                };
+                let fixed_cmd = if command == "pkg" {
+                    format!(
+                        "{} bales {} {} -o {}",
+                        "".green().bold(),
+                        command,
+                        input,
+                        (output.to_owned() + ".tar.gz").underline().green()
+                    )
+                } else {
+                    format!(
+                        "{} bales {} {} -o {}",
+                        "".green().bold(),
+                        command,
+                        (input.to_owned() + ".tar.gz").underline().green(),
+                        output,
+                    )
+                };
                 write!(
                     f,
                     "\n{}  {}\n   {}\n    {}\n   {}\n    {}",
                     "󱞪".bold(),
-                    "No file extension specified for output!".red().bold(),
+                    "No file extension specified!".red().bold(),
                     "Your command: ".bold(),
                     cmd,
                     "correct usage (example): ".bold(),
@@ -38,6 +60,17 @@ impl fmt::Display for BalesError {
                     "exists!".red().bold(),
                     "".green().bold(),
                     format!("Specify a {} path that does not exist!", input).bold(),
+                );
+                write!(f, "\n{}  {}", "󱞪".bold(), format)
+            }
+            Self::NoFileExists(path, input) => {
+                let format = format!(
+                    "{} {} {}\n   {} {}",
+                    format!("Path specified as {}:", input).bold().red(),
+                    path.display().underline(),
+                    "does not exists!".red().bold(),
+                    "".green().bold(),
+                    format!("Specify a {} path that exists!", input).bold(),
                 );
                 write!(f, "\n{}  {}", "󱞪".bold(), format)
             }

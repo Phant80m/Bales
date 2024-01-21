@@ -2,7 +2,7 @@
 use anyhow::Result;
 
 use super::{Arguments, Subcommands};
-use crate::archive::BalesCompress;
+use crate::archive::{BalesCompress, BalesDecompress};
 
 impl Arguments {
     pub fn handle(self) -> Result<()> {
@@ -11,9 +11,11 @@ impl Arguments {
                 input,
                 output,
                 force,
-                method,
             } => {
-                let compress = BalesCompress::parse(input, output, force, method)?.match_type()?;
+                let compress = BalesCompress::parse(input, output, force)?.match_type()?;
+            }
+            Subcommands::UnPackage { input, output } => {
+                let decompress = BalesDecompress::parse(input, output)?;
             }
         }
         Ok(())

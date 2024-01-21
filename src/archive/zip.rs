@@ -1,9 +1,9 @@
 use super::BalesCompress;
+use crate::archive::utils::*;
 use anyhow::Result;
 use ewsc::success;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{fs::File, io, path::Path};
-use term_size::dimensions;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 
@@ -55,10 +55,6 @@ impl BalesCompress {
     }
 }
 
-// misc functions
-pub fn total_files(path: &Path) -> usize {
-    WalkDir::new(path).into_iter().count()
-}
 fn add_files_to_zip<W>(
     zip: &mut zip::write::ZipWriter<W>,
     file_path: &Path,
@@ -74,16 +70,4 @@ where
         io::copy(&mut file, zip)?;
     }
     Ok(())
-}
-
-pub fn custom_format(bar_size: usize) -> String {
-    format!(
-        "[{{elapsed_precise}}{{spinner}}] [{{bar:{bar_size}.yellow/white}}] {{pos:>7.yellow}}/{{len:7}} {{msg}}",
-        bar_size = bar_size
-    )
-}
-
-pub fn term_size() -> usize {
-    let dims = dimensions().unwrap_or((45, 0)).0;
-    dims
 }

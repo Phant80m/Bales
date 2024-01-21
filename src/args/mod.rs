@@ -19,6 +19,11 @@ enum Subcommands {
         #[arg(short, long)]
         // force override output
         force: bool,
-        method: Option<String>,
+    },
+    #[clap(name = "upkg")]
+    UnPackage {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 }

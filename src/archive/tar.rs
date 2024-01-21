@@ -1,10 +1,11 @@
-use super::BalesCompress;
-use crate::archive::zip::{custom_format, term_size, total_files};
+use super::{BalesCompress, BalesDecompress};
+use crate::archive::utils::*;
 use anyhow::{Context, Result};
 use ewsc::success;
-use flate2::{write::GzEncoder, Compression};
+use flate2::{write::GzDecoder, write::GzEncoder, Compression};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{fs::File, path::Path};
+use tar::Archive;
 use walkdir::WalkDir;
 
 impl BalesCompress {
@@ -56,6 +57,17 @@ impl BalesCompress {
                 .green()
         );
 
+        Ok(())
+    }
+}
+
+impl BalesDecompress {
+    pub fn from_tar(&self) -> Result<()> {
+        let tar_gz = File::open(&self.input)?;
+        let tar = GzDecoder::new(tar_gz);
+        let mut archive = Archive::new(tar);
+
+        archive.unpack(&self.output)?;
         Ok(())
     }
 }
