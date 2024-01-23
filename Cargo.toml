@@ -12,9 +12,11 @@ ewsc = { version = "0.1.0", path = "../EWSC", default-features = false }
 flate2 = "1.0.28"
 indicatif = "0.17.7"
 owo-colors = "4.0.0"
+reqwest = { version = "0.11.23", features = ["blocking"] }
 strum = "0.25.0"
 strum_macros = "0.25.3"
 tar = "0.4.40"
+tempfile = "3.9.0"
 term_size = "0.3.2"
 thiserror = "1.0.56"
 url = "2.5.0"

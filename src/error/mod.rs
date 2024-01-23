@@ -9,4 +9,6 @@ pub enum BalesError {
     NoFileExists(PathBuf, String),
     UnknownArchiveType(String),
     RelativeUrlWithoutBase(String),
+    InvalidChar(String),
+    NoOutputSpecified(String),
 }

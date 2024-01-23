@@ -103,6 +103,35 @@ impl fmt::Display for BalesError {
                     format!("{}{}", "https://".green().underline(), url),
                 )
             }
+            Self::InvalidChar(char) => {
+                let format = format!(
+                    "{} \n   {}",
+                    "One or more invalid characters were present in: "
+                        .bold()
+                        .red(),
+                    char.underline()
+                );
+                write!(f, "\n{}  {}", "󱞪".bold(), format)
+            }
+            Self::NoOutputSpecified(input) => {
+                let command = format!("{} bales extract --url {}", "x".red().bold(), input,);
+                let fixed = format!(
+                    "{} bales extract --url {} -o {}",
+                    "".green().bold(),
+                    input,
+                    "example.tar.gz".green().underline(),
+                );
+                write!(
+                    f,
+                    "\n{}  {}\n   {}\n    {}\n   {}\n    {}",
+                    "󱞪".bold(),
+                    "No output specified!".red().bold(),
+                    "Your command: ".bold(),
+                    command,
+                    "correct usage (example): ".bold(),
+                    fixed,
+                )
+            }
         }
     }
 }

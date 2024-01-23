@@ -18,7 +18,9 @@ impl Arguments {
                 if !url {
                     let decompress = BalesDecompress::parse(input, output)?.match_type()?;
                 } else {
-                    BalesDecompress::parse_url(input, output)?;
+                    BalesDecompress::parse_url(input, output)?
+                        .download()?
+                        .match_type()?;
                 }
             }
         }

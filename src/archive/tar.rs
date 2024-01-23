@@ -63,10 +63,7 @@ impl BalesCompress {
 
 impl BalesDecompress {
     pub fn from_tar(&self) -> Result<()> {
-        let input = &self
-            .input
-            .canonicalize()
-            .expect("failed to canonicalize path");
+        let input = &self.input;
         let tar_gz = File::open(input)?;
         let tar = GzDecoder::new(tar_gz);
         let mut archive = Archive::new(tar);
