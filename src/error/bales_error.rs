@@ -77,10 +77,9 @@ impl fmt::Display for BalesError {
             Self::UnknownArchiveType(extension) => {
                 write!(
                     f,
-                    "\n{}  {} {}{}\n   {}\n{}",
+                    "\n{}  {} .{}\n   {}\n{}",
                     "󱞪".bold(),
                     "Unknown compression format:".red().bold(),
-                    ".",
                     extension.underline(),
                     "Available Formats".bold(),
                     Archive::VARIANTS

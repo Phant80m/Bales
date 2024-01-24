@@ -34,10 +34,8 @@ impl BalesCompress {
         });
 
         // make sure output path does not exist
-        if !force {
-            if output.exists() {
-                return Err(BalesError::FileExists(output, "output".to_string()));
-            }
+        if !force && output.exists() {
+            return Err(BalesError::FileExists(output, "output".to_string()));
         }
 
         Ok(Self {

@@ -23,5 +23,5 @@ bales extract file.tar.gz # output will be file/
 
 ### How to extract a file from a url
 ```bash
-bales extract --url https://example.com/sample.tar.gz -o main.zip # output must be specified 
+bales extract --url https://example.com/sample.tar.gz -o main/ # output must be specified 
 ```

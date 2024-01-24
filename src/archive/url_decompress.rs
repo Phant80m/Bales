@@ -7,9 +7,6 @@ use owo_colors::OwoColorize;
 use std::io::{Cursor, Read};
 use std::{fs::File, io::copy, path::PathBuf};
 use url::Url;
-const DOWNLOAD_TEMPLATE: &str =
-    "{msg} {spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
-const CHUNK_SIZE: usize = 10;
 // parse url
 impl BalesDecompress {
     pub fn parse_url(
@@ -50,6 +47,7 @@ impl BalesDecompress {
     }
 }
 // download file
+const CHUNK_SIZE: usize = 10;
 impl BalesUrlDecompress {
     pub fn download(&self) -> Result<BalesDecompress, BalesError> {
         let tmp_dir = tempfile::NamedTempFile::new()

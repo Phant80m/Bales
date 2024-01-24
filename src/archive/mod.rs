@@ -5,6 +5,7 @@ mod url_decompress;
 mod utils;
 use crate::error::BalesError;
 use anyhow::{Context, Result};
+use std::path::Path;
 use std::path::PathBuf;
 use strum_macros::{EnumString, EnumVariantNames};
 use url::Url;
@@ -34,7 +35,7 @@ pub struct BalesUrlDecompress {
     pub output: PathBuf,
     pub archive: Archive,
 }
-fn archive_type(path: &PathBuf) -> Result<Archive, BalesError> {
+fn archive_type(path: &Path) -> Result<Archive, BalesError> {
     let extension = path
         .extension()
         .context("failed to find file extension")

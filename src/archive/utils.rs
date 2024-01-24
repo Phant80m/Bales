@@ -20,6 +20,6 @@ pub fn custom_dl_format(bar_size: usize) -> String {
     )
 }
 pub fn term_size() -> usize {
-    let dims = dimensions().unwrap_or((45, 0)).0;
-    dims
+    
+    dimensions().unwrap_or((45, 0)).0
 }
