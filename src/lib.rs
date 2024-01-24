@@ -2,3 +2,4 @@
 pub mod archive;
 pub mod args;
 pub mod error;
+pub mod update;

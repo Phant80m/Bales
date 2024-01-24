@@ -70,11 +70,6 @@ impl BalesUrlDecompress {
         let mut reader = resp.into_reader();
         let bar = ProgressBar::new(expected_len as u64);
         bar.set_message("Downloading");
-        // bar.set_style(
-        //     ProgressStyle::with_template(DOWNLOAD_TEMPLATE)
-        //         .unwrap()
-        //         .progress_chars("##-"),
-        // );
         bar.set_style(
             ProgressStyle::with_template(&custom_dl_format(
                 term_size() - ((term_size() * 2) / 3) + 6,
@@ -115,7 +110,10 @@ impl BalesUrlDecompress {
         buffer.truncate(buf_len);
         copy(&mut Cursor::new(buffer), &mut dest.0).expect("failed to copy byes to temp dir");
         if !&dest.1.exists() {
-            eprintln!("downloaded file does not exist!");
+            return Err(BalesError::NoFileExists(
+                dest.1,
+                "Downloaded file".to_string(),
+            ));
         }
         Ok(BalesDecompress {
             input: dest.1.clone(),

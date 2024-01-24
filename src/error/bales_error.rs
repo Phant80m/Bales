@@ -93,13 +93,14 @@ impl fmt::Display for BalesError {
             Self::RelativeUrlWithoutBase(url) => {
                 write!(
                     f,
-                    "\n{}  {}\n   {}\n    {}\n   {}\n    {}",
+                    "\n{}  {}\n   {}\n    {}\n   {}\n    {}{}",
                     "󱞪".bold(),
                     "No url base specified!".red().bold(),
                     "url entered: ".bold(),
                     url.red().underline(),
                     "correct usage (example): ".bold(),
-                    format!("{}{}", "https://".green().underline(), url),
+                    "https://".green().underline(),
+                    url,
                 )
             }
             Self::InvalidChar(char) => {
