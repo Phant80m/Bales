@@ -6,7 +6,7 @@ mod handler;
 #[derive(Parser, Debug)]
 pub struct Arguments {
     #[command(subcommand)]
-    subcommand: Subcommands,
+    subcommand: Option<Subcommands>,
 }
 
 #[derive(Debug, Subcommand)]
