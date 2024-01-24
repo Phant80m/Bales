@@ -1,4 +1,6 @@
 use super::{archive_type, Archive, BalesCompress, BalesError};
+use owo_colors::OwoColorize;
+
 use anyhow::Result;
 use std::path::PathBuf;
 

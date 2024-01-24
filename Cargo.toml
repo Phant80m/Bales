@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.79"
 clap = { version = "4.4.17", features = ["derive"] }
-ewsc = { version = "0.1.0", path = "../EWSC", default-features = false }
+ewsc = { version = "0.1.0", path = "./ewsc", default-features = false }
 flate2 = "1.0.28"
 indicatif = "0.17.7"
 owo-colors = "4.0.0"

@@ -13,6 +13,12 @@ pub fn custom_format(bar_size: usize) -> String {
     )
 }
 
+pub fn custom_dl_format(bar_size: usize) -> String {
+    format!(
+        "{{msg}}\n[{{elapsed_precise}}{{spinner}}] [{{bar:{bar_size}.yellow/white}}] {{bytes}}/{{total_bytes}} ({{bytes_per_sec}}, {{eta}})",
+        bar_size = bar_size
+    )
+}
 pub fn term_size() -> usize {
     let dims = dimensions().unwrap_or((45, 0)).0;
     dims
