@@ -5,6 +5,8 @@ mod handler;
 
 #[derive(Parser, Debug)]
 pub struct Arguments {
+    #[clap(short, long)]
+    version: bool,
     #[command(subcommand)]
     subcommand: Option<Subcommands>,
 }
