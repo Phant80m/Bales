@@ -16,8 +16,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Build
-    - uses: dtolnay/rust-toolchain@nightly
-    - run: cargo build --release --verbose
+      uses: dtolnay/rust-toolchain@nightly
+      run: cargo build --release --verbose
     - name: Upload binary artifact
       uses: actions/upload-artifact@v3.1.1
       with:
