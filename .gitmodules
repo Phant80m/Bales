@@ -1,0 +1,3 @@
+[submodule "ewsc"]
+	path = ewsc
+	url = https://github.com/Phant80m/EWSC
