@@ -1,0 +1,25 @@
+name: Compile-Linux
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build
+      uses: dtolnay/rust-toolchain@nightly
+    - run: cargo build --release --verbose
+    - name: Upload binary artifact
+      uses: actions/upload-artifact@v3.1.1
+      with:
+        name: bales-amd64-gnu
+        path: target/release/bales.exe
