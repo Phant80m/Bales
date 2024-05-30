@@ -14,7 +14,6 @@ impl BalesDecompress {
             .to_str()
             .unwrap()
             .to_string();
-
         let file_stem = if file_stem_str.ends_with(".tar") {
             &file_stem_str[..file_stem_str.len() - 4]
         } else {

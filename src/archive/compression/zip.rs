@@ -1,5 +1,6 @@
 use crate::archive::utils::*;
 use owo_colors::OwoColorize;
+use zip::ZipArchive;
 
 use crate::archive::{BalesCompress, BalesDecompress};
 use anyhow::Context;
@@ -45,6 +46,7 @@ impl BalesCompress {
                 }
             }
         }
+        bar.finish();
         success!(
             "Created zip archive at: {}",
             &self
@@ -87,8 +89,35 @@ impl BalesDecompress {
         let archive = std::fs::read(input)
             .context("error reading zip file contents")
             .expect("failed to read zip archive");
-        zip_extract::extract(Cursor::new(archive), &self.output, false)
-            .context("failed to extract contents of zip")?;
+
+        let mut zip = ZipArchive::new(Cursor::new(archive))?;
+        let total = zip.len();
+        // create bar
+        let bar = ProgressBar::new(total as u64);
+        bar.set_style(
+            ProgressStyle::with_template(&custom_format(term_size() - ((term_size() * 2) / 3) + 6))
+                .unwrap()
+                .progress_chars("=> "),
+        );
+
+        for i in 0..zip.len() {
+            bar.inc(1);
+            let mut file = zip.by_index(i).unwrap();
+            bar.set_message(format!("\n extracting: {}", file.name()));
+
+            let output_path = Path::new(&self.output);
+
+            if file.name().ends_with('/') {
+                std::fs::create_dir_all(output_path.join(file.name()))?;
+            } else {
+                let mut output_file = File::create(output_path.join(file.name()))?;
+
+                std::io::copy(&mut file, &mut output_file)?;
+            }
+        }
+        // // zip_extract::extract(Cursor::new(archive), &self.output, false)
+        //     .context("failed to extract contents of zip")?;
+        bar.finish();
         success!(
             "Unpacked archive at: {}",
             &self

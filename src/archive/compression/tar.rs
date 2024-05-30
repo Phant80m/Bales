@@ -5,6 +5,8 @@ use ewsc::success;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
+use std::fs;
+use std::io::Seek;
 use std::{fs::File, path::Path};
 use tar::Archive;
 use walkdir::WalkDir;
@@ -47,6 +49,7 @@ impl BalesCompress {
                 }
             }
         }
+        bar.finish();
         success!(
             "Created zip archive at: {}",
             &self
@@ -65,15 +68,43 @@ impl BalesCompress {
 impl BalesDecompress {
     pub fn from_tar(&self) -> Result<()> {
         let input = &self.input;
-        let tar_gz = File::open(input)?;
+        let mut tar_gz = File::open(input)?;
+        let tar = GzDecoder::new(&tar_gz);
+        let mut archive = Archive::new(tar);
+        // if output not exists!
+        if !&self.output.exists() {
+            fs::create_dir(&self.output).context("failed to create output")?;
+        }
+        // total archive
+        let total = archive.entries()?.count();
+        println!("{}", total);
+        // create bar
+        let bar = ProgressBar::new(total as u64);
+
+        bar.set_style(
+            ProgressStyle::with_template(&custom_format(term_size() - ((term_size() * 2) / 3) + 6))
+                .unwrap()
+                .progress_chars("=> "),
+        );
+        // set file to begining
+        tar_gz.seek(std::io::SeekFrom::Start(0))?;
+        // re init archive
         let tar = GzDecoder::new(tar_gz);
         let mut archive = Archive::new(tar);
-
+        //
         for entry in archive.entries()? {
-            if !entry?.unpack_in(&self.output)? {
+            let mut entry = entry?;
+            // set bar message as
+            bar.set_message(format!(
+                "\n extracting: {}",
+                &entry.path()?.file_name().unwrap().to_str().unwrap()
+            ));
+            bar.inc(1);
+            if !entry.unpack_in(&self.output).context("LINE: 73")? {
                 eprintln!("error: sketchy tar tried to unpack outside its root.")
             }
         }
+        bar.finish();
         success!(
             "Unpacked archive at: {}",
             &self

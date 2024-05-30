@@ -25,6 +25,7 @@ pub enum Archive {
 }
 
 // decompress
+#[derive(Debug)]
 pub struct BalesDecompress {
     pub input: PathBuf,
     pub output: PathBuf,
