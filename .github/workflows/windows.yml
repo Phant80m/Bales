@@ -23,12 +23,3 @@ jobs:
       with:
         name: bales-win64-msvc
         path: target/release/bales.exe
-    - name: Create Release
-      uses: marvinpinto/action-automatic-releases@v1.2.1
-      with:
-        repo_token: "${{ secrets.GITHUB_TOKEN }}"
-        automatic_release_tag: "latest"
-        prerelease: true
-        title: "Windows Build"
-        files: |
-          target/release/bales.exe
