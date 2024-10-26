@@ -1,4 +1,4 @@
-use crate::update::Updater;
+use crate::{error::BalesError, update::Updater};
 use anyhow::Result;
 use core::panic;
 use ewsc::warning;
@@ -31,7 +31,18 @@ impl Arguments {
                         .match_type()?;
                 }
             }
-            None => panic!("Unknown command"),
+            None => {
+                eprintln!(
+                    "{}\n{}{}\n{}{}{}",
+                    "Error:",
+                    "󱞪  ".bold(),
+                    "Unknown command:".red().bold(),
+                    "   run",
+                    " --help ".green(),
+                    "to list available commands"
+                );
+                return Ok(());
+            }
         }
         if Updater::is_internet() && Updater::parse(PKG_URL).is_outdated().unwrap() {
             warning!("program out of date! Please update to the latest version");

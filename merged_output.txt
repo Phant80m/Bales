@@ -1,0 +1,1637 @@
+- mod.rs
+mod tar;
+mod utils;
+mod zip;
+use crate::error::BalesError;
+use anyhow::Result;
+use std::path::PathBuf;
+use strum_macros::{EnumString, EnumVariantNames};
+pub struct BalesCompress {
+    pub input: Vec<PathBuf>,
+    pub output: PathBuf,
+    pub archive: Archive,
+}
+#[derive(Debug, EnumString, EnumVariantNames)]
+pub enum Archive {
+    #[strum(serialize = ".tar.gz")]
+    Tar,
+    #[strum(serialize = ".zip")]
+    Zip,
+}
+
+// decompress
+pub struct BalesDecompress {
+    pub input: PathBuf,
+    pub output: Option<PathBuf>,
+}
+impl BalesDecompress {
+    pub fn parse(input: PathBuf, output: Option<PathBuf>) -> Result<Self, BalesError> {
+        // check input validity
+
+        //
+        let output = output.unwrap_or(input.file_stem());
+
+        let i_extension = input.extension();
+        if i_extension.is_none() {
+            return Err(BalesError::NoFileExtension((
+                input.display().to_string(),
+                output.display().to_string(),
+                "upkg".to_string(),
+            )));
+        }
+
+        if !input.exists() {
+            return Err(BalesError::NoFileExists(input, "archive".to_string()));
+        }
+
+        Ok(Self { input, output })
+    }
+}
+impl BalesCompress {
+    pub fn parse(
+        mut input: Vec<PathBuf>,
+        output: PathBuf,
+        force: bool,
+    ) -> Result<Self, BalesError> {
+        // check output extension
+        if output.extension().is_none() {
+            return Err(BalesError::NoFileExtension((
+                input
+                    .iter()
+                    .map(|path| path.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                output.display().to_string(),
+                "pkg".to_string(),
+            )));
+        }
+        // check path validity
+        input.retain(|path| {
+            if !path.exists() {
+                ewsc::warning!(
+                    "path: '{}' Does not exist proceeding without it!",
+                    path.display()
+                );
+            }
+            path.exists()
+        });
+
+        // make sure output path does not exist
+        if !force {
+            if output.exists() {
+                return Err(BalesError::FileExists(output, "output".to_string()));
+            }
+        }
+
+        Ok(Self {
+            input,
+            output: output.clone(),
+            archive: archive_type(&output)?,
+        })
+    }
+    pub fn match_type(&self) -> Result<()> {
+        match &self.archive {
+            Archive::Tar => self.into_tar()?,
+            Archive::Zip => self.into_zip()?,
+        };
+        Ok(())
+    }
+}
+fn archive_type(path: &PathBuf) -> Result<Archive, BalesError> {
+    let extension = path
+        .extension()
+        .unwrap()
+        .to_string_lossy()
+        .to_string()
+        .to_lowercase();
+    match extension.as_str() {
+        "gz" => Ok(Archive::Tar),
+        "zip" => Ok(Archive::Zip),
+        _ => Err(BalesError::UnknownArchiveType(extension)),
+    }
+}
+
+- tar.rs
+use super::BalesCompress;
+use crate::archive::utils::*;
+use anyhow::{Context, Result};
+use ewsc::success;
+use flate2::{write::GzEncoder, Compression};
+use indicatif::{ProgressBar, ProgressStyle};
+use std::{fs::File, path::Path};
+use walkdir::WalkDir;
+
+impl BalesCompress {
+    pub fn into_tar(&self) -> Result<()> {
+        // progress bar
+        let total_files = self
+            .input
+            .iter()
+            .map(|path| total_files(path))
+            .sum::<usize>();
+        let bar = ProgressBar::new(total_files as u64);
+
+        bar.set_style(
+            ProgressStyle::with_template(&custom_format(term_size() - ((term_size() * 2) / 3) + 6))
+                .unwrap()
+                .progress_chars("=> "),
+        );
+
+        let tarball = File::create(&self.output).expect("Failed to create tarball");
+        let enc = GzEncoder::new(tarball, Compression::fast());
+        let mut tar = tar::Builder::new(enc);
+        for items in &self.input {
+            let path = Path::new(items);
+            if path.is_file() {
+                let mut file = File::open(path).context("failed to open file")?;
+                tar.append_file(path, &mut file)?;
+                bar.inc(1);
+            } else if path.is_dir() {
+                for entry in WalkDir::new(items) {
+                    let entry = entry?;
+                    let path = entry.path();
+                    let mut file = File::open(path).context("failed to open file")?;
+                    if file.metadata()?.is_file() {
+                        tar.append_file(path, &mut file)
+                            .context("failed to add file to tar")?;
+                    }
+                    bar.inc(1);
+                }
+            }
+        }
+        success!(
+            "Created zip archive at: {}",
+            &self
+                .output
+                .canonicalize()
+                .expect("failed to canoncalize path")
+                .display()
+                .underline()
+                .green()
+        );
+
+        Ok(())
+    }
+}
+
+- zip.rs
+use super::BalesCompress;
+use crate::archive::utils::*;
+use anyhow::Result;
+use ewsc::success;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::{fs::File, io, path::Path};
+use walkdir::WalkDir;
+use zip::write::FileOptions;
+
+impl BalesCompress {
+    pub fn into_zip(&self) -> Result<()> {
+        // progress bar
+        let total_files = self
+            .input
+            .iter()
+            .map(|path| total_files(path))
+            .sum::<usize>();
+        let bar = ProgressBar::new(total_files as u64);
+        bar.set_style(
+            ProgressStyle::with_template(&custom_format(term_size() - ((term_size() * 2) / 3) + 6))
+                .unwrap()
+                .progress_chars("=> "),
+        );
+        // zip
+        let zip_file = File::create(&self.output)?;
+        let options = FileOptions::default().compression_method(zip::CompressionMethod::Bzip2);
+
+        let mut zip = zip::write::ZipWriter::new(zip_file);
+
+        for items in &self.input {
+            let path = Path::new(items);
+            if path.is_file() {
+                add_files_to_zip(&mut zip, path, options)?;
+                bar.inc(1);
+            } else if path.is_dir() {
+                for entry in WalkDir::new(items) {
+                    let entry = entry?;
+                    let path = entry.path();
+                    add_files_to_zip(&mut zip, path, options)?;
+                    bar.inc(1);
+                }
+            }
+        }
+        success!(
+            "Created zip archive at: {}",
+            &self
+                .output
+                .canonicalize()
+                .expect("failed to canoncalize path")
+                .display()
+                .underline()
+                .green()
+        );
+        Ok(())
+    }
+}
+
+fn add_files_to_zip<W>(
+    zip: &mut zip::write::ZipWriter<W>,
+    file_path: &Path,
+    options: FileOptions,
+) -> Result<(), io::Error>
+where
+    W: io::Write + io::Seek,
+{
+    if file_path.is_file() {
+        let relative_path = file_path.strip_prefix(".").unwrap_or(file_path);
+        zip.start_file(relative_path.to_str().unwrap(), options)?;
+        let mut file = File::open(file_path)?;
+        io::copy(&mut file, zip)?;
+    }
+    Ok(())
+}
+
+- utils.rs
+use std::path::Path;
+use term_size::dimensions;
+use walkdir::WalkDir;
+// misc functions
+pub fn total_files(path: &Path) -> usize {
+    WalkDir::new(path).into_iter().count()
+}
+
+pub fn custom_format(bar_size: usize) -> String {
+    format!(
+        "[{{elapsed_precise}}{{spinner}}] [{{bar:{bar_size}.yellow/white}}] {{pos:>7.yellow}}/{{len:7}} {{msg}}",
+        bar_size = bar_size
+    )
+}
+
+pub fn term_size() -> usize {
+    let dims = dimensions().unwrap_or((45, 0)).0;
+    dims
+}
+
+- handler.rs
+#![allow(unused_variables)]
+use anyhow::Result;
+
+use super::{Arguments, Subcommands};
+use crate::archive::{BalesCompress, BalesDecompress};
+
+impl Arguments {
+    pub fn handle(self) -> Result<()> {
+        match self.subcommand {
+            Subcommands::Package {
+                input,
+                output,
+                force,
+            } => {
+                let compress = BalesCompress::parse(input, output, force)?.match_type()?;
+            }
+            Subcommands::UnPackage { input, output } => {
+                let decompress = BalesDecompress::parse(input, output)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+- mod.rs
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+mod handler;
+
+#[derive(Parser, Debug)]
+pub struct Arguments {
+    #[command(subcommand)]
+    subcommand: Subcommands,
+}
+
+#[derive(Debug, Subcommand)]
+enum Subcommands {
+    #[clap(name = "pkg")]
+    Package {
+        input: Vec<PathBuf>,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(short, long)]
+        // force override output
+        force: bool,
+    },
+    #[clap(name = "upkg")]
+    UnPackage {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+}
+
+- bales_error.rs
+use super::BalesError;
+use crate::archive::Archive;
+use std::fmt;
+use strum::VariantNames;
+impl fmt::Display for BalesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use owo_colors::OwoColorize;
+        match self {
+            Self::NoFileExtension((input, output, command)) => {
+                let cmd = if command == "pkg" {
+                    format!(
+                        "{} bales {} {} -o {}",
+                        "x".red().bold(),
+                        command,
+                        input,
+                        output.underline().red()
+                    )
+                } else {
+                    format!(
+                        "{} bales {} {} -o {}",
+                        "x".red().bold(),
+                        command,
+                        input.underline().red(),
+                        output
+                    )
+                };
+                let fixed_cmd = if command == "pkg" {
+                    format!(
+                        "{} bales {} {} -o {}",
+                        "".green().bold(),
+                        command,
+                        input,
+                        (output.to_owned() + ".tar.gz").underline().green()
+                    )
+                } else {
+                    format!(
+                        "{} bales {} {} -o {}",
+                        "".green().bold(),
+                        command,
+                        (input.to_owned() + ".tar.gz").underline().green(),
+                        output,
+                    )
+                };
+                write!(
+                    f,
+                    "\n{}  {}\n   {}\n    {}\n   {}\n    {}",
+                    "󱞪".bold(),
+                    "No file extension specified!".red().bold(),
+                    "Your command: ".bold(),
+                    cmd,
+                    "correct usage (example): ".bold(),
+                    fixed_cmd,
+                )
+            }
+            Self::FileExists(path, input) => {
+                let format = format!(
+                    "{} {} {}\n   {} {}",
+                    format!("Path specified as {}:", input).bold().red(),
+                    path.display().underline(),
+                    "exists!".red().bold(),
+                    "".green().bold(),
+                    format!("Specify a {} path that does not exist!", input).bold(),
+                );
+                write!(f, "\n{}  {}", "󱞪".bold(), format)
+            }
+            Self::NoFileExists(path, input) => {
+                let format = format!(
+                    "{} {} {}\n   {} {}",
+                    format!("Path specified as {}:", input).bold().red(),
+                    path.display().underline(),
+                    "does not exists!".red().bold(),
+                    "".green().bold(),
+                    format!("Specify a {} path that exists!", input).bold(),
+                );
+                write!(f, "\n{}  {}", "󱞪".bold(), format)
+            }
+            Self::UnknownArchiveType(extension) => {
+                write!(
+                    f,
+                    "\n{}  {} {}{}\n   {}\n{}",
+                    "󱞪".bold(),
+                    "Unknown compression format:".red().bold(),
+                    ".",
+                    extension.underline(),
+                    "Available Formats".bold(),
+                    Archive::VARIANTS
+                        .to_vec()
+                        .iter()
+                        .map(|item| format!("  - {}", item))
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                )
+            }
+        }
+    }
+}
+
+- mod.rs
+use std::path::PathBuf;
+use thiserror::Error;
+
+mod bales_error;
+#[derive(Error, Debug)]
+pub enum BalesError {
+    NoFileExtension((String, String, String)),
+    FileExists(PathBuf, String),
+    NoFileExists(PathBuf, String),
+    UnknownArchiveType(String),
+}
+
+- lib.rs
+#![feature(io_error_more)]
+pub mod archive;
+pub mod args;
+pub mod error;
+
+- main.rs
+use bales::args::Arguments;
+use clap::Parser;
+fn main() -> anyhow::Result<()> {
+    Arguments::parse().handle()?;
+    Ok(())
+}
+
+- archive.rs
+use super::FreightCompress;
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use owo_colors::OwoColorize;
+use std::thread;
+use std::{fs::File, io, path::Path};
+use tar::Archive;
+use walkdir::WalkDir;
+use zip::{read::ZipArchive, write::FileOptions};
+
+impl FreightCompress {
+    pub fn into_tar(input: Vec<String>, output: String) -> Result<(), io::Error> {
+        let handle = thread::spawn(move || {
+            let tar_gz = File::create(output)?;
+            let enc = GzEncoder::new(tar_gz, Compression::best());
+            let mut tar = tar::Builder::new(enc);
+
+            for items in input {
+                let path = Path::new(&items);
+                let relative_path = path.strip_prefix(".").unwrap_or(path);
+
+                if path.is_file() {
+                    let mut file = File::open(&items)?;
+                    tar.append_file(relative_path, &mut file)?;
+                } else if path.is_dir() {
+                    tar.append_dir_all(relative_path, &items)?;
+                }
+            }
+            Ok(())
+        });
+        match handle.join() {
+            Ok(result) => {
+                println!("{}", "File(s) compressed into a tarball!".bold().green());
+                result
+            }
+            Err(e) => {
+                eprintln!("Error occurred in the thread: {:?}", e);
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Thread panicked or returned an error",
+                ))
+            }
+        }
+    }
+    pub fn from_tar(input: String, output: Option<String>) -> Result<(), io::Error> {
+        let handle = thread::spawn(move || {
+            let tar_gz = File::open(&input)?;
+            let tar = GzDecoder::new(tar_gz);
+            let mut archive = Archive::new(tar);
+            let output = output
+                .map(|s| s.trim_start_matches('.').to_string())
+                .unwrap_or_else(|| {
+                    let input_path = Path::new(&input);
+                    let file_stem = input_path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or_default();
+                    let clean_stem = file_stem.trim_end_matches(".tar").trim_end_matches(".gz");
+                    clean_stem.to_string()
+                });
+
+            archive.unpack(output)?;
+
+            Ok(())
+        });
+        match handle.join() {
+            Ok(result) => {
+                println!("{}", "File(s) decompressed from a tarball!".bold().green());
+                result
+            }
+            Err(e) => {
+                eprintln!("Error occurred in the thread: {:?}", e);
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Thread panicked or returned an error",
+                ))
+            }
+        }
+    }
+    pub fn into_zip(input: Vec<String>, output: String) -> Result<(), io::Error> {
+        let handle = thread::spawn(move || {
+            let zip_file = File::create(format!("{}", output))?;
+            let options = FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored)
+                .unix_permissions(0o755); // Optional: Set the file permissions for the stored files
+
+            let mut zip = zip::write::ZipWriter::new(zip_file);
+
+            for items in &input {
+                let path = Path::new(items);
+                if path.is_file() {
+                    zip_file_into_zip(&mut zip, path, options)?;
+                } else if path.is_dir() {
+                    for entry in WalkDir::new(items) {
+                        let entry = entry?;
+                        let path = entry.path();
+                        zip_file_into_zip(&mut zip, path, options)?;
+                    }
+                }
+            }
+            Ok(())
+        });
+        match handle.join() {
+            Ok(result) => {
+                println!("{}", "File(s) compressed into a zip!".bold().green());
+                result
+            }
+            Err(e) => {
+                eprintln!("Error occurred in the thread: {:?}", e);
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Thread panicked or returned an error",
+                ))
+            }
+        }
+    }
+    pub fn from_zip(input: String, output: String) -> Result<(), io::Error> {
+        let handle = thread::spawn(move || {
+            let zip_file = File::open(input)?;
+            let mut archive = ZipArchive::new(zip_file)?;
+
+            for i in 0..archive.len() {
+                let mut file = archive.by_index(i)?;
+
+                let outpath = match file.enclosed_name() {
+                    Some(path) => Path::new(output.as_str()).join(path),
+                    None => continue,
+                };
+
+                if (*file.name()).ends_with('/') {
+                    // Create directory if it doesn't exist
+                    std::fs::create_dir_all(&outpath)?;
+                } else {
+                    if let Some(parent) = outpath.parent() {
+                        if !parent.exists() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                    }
+                    let mut outfile = File::create(&outpath)?;
+                    io::copy(&mut file, &mut outfile)?;
+                }
+            }
+
+            Ok(())
+        });
+        match handle.join() {
+            Ok(result) => {
+                println!("{}", "File(s) decompressed from a zip!".bold().green());
+                result
+            }
+            Err(e) => {
+                eprintln!("Error occurred in the thread: {:?}", e);
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Thread panicked or returned an error",
+                ))
+            }
+        }
+    }
+}
+fn zip_file_into_zip<W>(
+    zip: &mut zip::write::ZipWriter<W>,
+    file_path: &Path,
+    options: FileOptions,
+) -> Result<(), io::Error>
+where
+    W: io::Write + io::Seek,
+{
+    if file_path.is_file() {
+        let relative_path = file_path.strip_prefix(".").unwrap_or(file_path);
+        zip.start_file(relative_path.to_str().unwrap(), options)?;
+        let mut file = File::open(file_path)?;
+        io::copy(&mut file, zip)?;
+    }
+    Ok(())
+}
+
+- mod.rs
+pub struct FreightCompress;
+pub mod archive;
+
+- handler.rs
+use crate::archive::FreightCompress;
+use crate::{Args, Commands};
+use std::io;
+pub fn handle_args(arg: Args) -> Result<(), io::Error> {
+    match arg.subcommand {
+        Commands::Package {
+            tar,
+            zip,
+            input_items,
+            output,
+        } => match (tar, zip) {
+            (true, true) => panic!("Cannot use two arguments!"),
+            (false, true) => {
+                FreightCompress::into_zip(input_items, output)?;
+            }
+            (true, false) => {
+                FreightCompress::into_tar(input_items, output)?;
+            }
+            (false, false) => unimplemented!(),
+        },
+        Commands::Unpackage {
+            tar,
+            zip,
+            input_items,
+            output,
+        } => match (tar, zip) {
+            (true, true) => panic!("Cannot use two arguments!"),
+            (false, true) => {
+                FreightCompress::from_zip(input_items, output.unwrap())?;
+            }
+            (true, false) => {
+                FreightCompress::from_tar(input_items, output)?;
+            }
+            (false, false) => unimplemented!(),
+        },
+    }
+    Ok(())
+}
+
+- mod.rs
+pub use super::Args;
+mod handler;
+pub use handler::handle_args;
+
+- lib.rs
+pub mod archive;
+pub mod flags;
+use clap::{Parser, Subcommand};
+#[derive(Parser)]
+pub struct Args {
+    #[clap(subcommand)]
+    pub subcommand: Commands,
+}
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    #[clap(name = "package")]
+    Package {
+        #[clap(short, long)]
+        tar: bool,
+        #[clap(short, long)]
+        zip: bool,
+        #[clap(value_name = "FILE_OR_DIR")]
+        input_items: Vec<String>,
+        #[clap(short, long)]
+        output: String,
+    },
+    #[clap(name = "unpackage")]
+    Unpackage {
+        #[clap(short, long)]
+        tar: bool,
+        #[clap(short, long)]
+        zip: bool,
+        #[clap(value_name = "TAR_GZ")]
+        input_items: String,
+        #[clap(short, long)]
+        output: Option<String>,
+    },
+}
+
+- main.rs
+use clap::Parser;
+use freight::flags::{handle_args, Args};
+use std::io;
+fn main() -> Result<(), io::Error> {
+    let arg = Args::parse();
+    handle_args(arg)?;
+
+    Ok(())
+}
+
+- mod.rs
+mod bales_compress;
+mod bales_decompress;
+mod compression;
+mod url_decompress;
+mod utils;
+use crate::error::BalesError;
+use anyhow::{Context, Result};
+use std::path::Path;
+use std::path::PathBuf;
+use strum_macros::{EnumString, EnumVariantNames};
+use url::Url;
+// compress
+pub struct BalesCompress {
+    pub input: Vec<PathBuf>,
+    pub output: PathBuf,
+    pub archive: Archive,
+}
+
+#[derive(Debug, EnumString, EnumVariantNames)]
+pub enum Archive {
+    #[strum(serialize = ".tar.gz")]
+    Tar,
+    #[strum(serialize = ".zip")]
+    Zip,
+}
+
+// decompress
+#[derive(Debug)]
+pub struct BalesDecompress {
+    pub input: PathBuf,
+    pub output: PathBuf,
+    pub archive: Archive,
+}
+pub struct BalesUrlDecompress {
+    pub input: Url,
+    pub output: PathBuf,
+    pub archive: Archive,
+}
+fn archive_type(path: &Path) -> Result<Archive, BalesError> {
+    let extension = path
+        .extension()
+        .context("failed to find file extension")
+        .unwrap()
+        .to_string_lossy()
+        .to_string()
+        .to_lowercase();
+    match extension.as_str() {
+        "gz" => Ok(Archive::Tar),
+        "zip" => Ok(Archive::Zip),
+        _ => Err(BalesError::UnknownArchiveType(extension)),
+    }
+}
+
+- utils.rs
+use std::path::Path;
+use term_size::dimensions;
+use walkdir::WalkDir;
+// misc functions
+pub fn total_files(path: &Path) -> usize {
+    WalkDir::new(path).into_iter().count()
+}
+
+pub fn custom_format(bar_size: usize) -> String {
+    format!(
+        "[{{elapsed_precise}}{{spinner}}] [{{bar:{bar_size}.yellow/white}}] {{pos:>7.yellow}}/{{len:7}} {{msg}}",
+        bar_size = bar_size
+    )
+}
+
+pub fn custom_dl_format(bar_size: usize) -> String {
+    format!(
+        "{{msg}}\n[{{elapsed_precise}}{{spinner}}] [{{bar:{bar_size}.yellow/white}}] {{bytes}}/{{total_bytes}} ({{bytes_per_sec}}, {{eta}})",
+        bar_size = bar_size
+    )
+}
+pub fn term_size() -> usize {
+    dimensions().unwrap_or((45, 0)).0
+}
+
+- url_decompress.rs
+use super::{archive_type, BalesDecompress, BalesError, BalesUrlDecompress};
+use crate::archive::utils::*;
+use anyhow::{Context, Result};
+use ewsc::error;
+use indicatif::{ProgressBar, ProgressStyle};
+use owo_colors::OwoColorize;
+use std::io::{Cursor, Read};
+use std::{fs::File, io::copy, path::PathBuf};
+use url::Url;
+// parse url
+impl BalesDecompress {
+    pub fn parse_url(
+        input: PathBuf,
+        output: Option<PathBuf>,
+    ) -> Result<BalesUrlDecompress, BalesError> {
+        // valid url checks
+        if output.is_none() {
+            return Err(BalesError::NoOutputSpecified(input.display().to_string()));
+        }
+        let output = output.unwrap();
+        if !output.exists() {
+            match std::fs::create_dir(&output) {
+                Ok(dir) => dir,
+                Err(e) => {
+                    error!("failed to create output directory: {}", e);
+                }
+            }
+        }
+        let input = input.display().to_string();
+
+        let url = Url::parse(&input);
+        if url.is_err() {
+            if let Err(err) = url {
+                if err == url::ParseError::RelativeUrlWithoutBase {
+                    return Err(BalesError::RelativeUrlWithoutBase(input));
+                } else if err == url::ParseError::InvalidDomainCharacter {
+                    return Err(BalesError::InvalidChar(input));
+                }
+                println!("{}", err);
+            }
+        }
+        Ok(BalesUrlDecompress {
+            input: url.clone().unwrap(),
+            output: output.clone(),
+            archive: archive_type(&PathBuf::from(&url.unwrap().as_str()))?,
+        })
+    }
+}
+// download file
+const CHUNK_SIZE: usize = 10;
+impl BalesUrlDecompress {
+    pub fn download(&self) -> Result<BalesDecompress, BalesError> {
+        let tmp_dir = tempfile::NamedTempFile::new()
+            .context("failed to create named temp file")
+            .unwrap();
+        let resp = ureq::builder()
+            .redirects(5)
+            .build()
+            .get(self.input.as_str())
+            .call()
+            .context("failed to send request to server")
+            .unwrap();
+        // bar
+        let expected_len = match resp.header("Content-Length") {
+            Some(hdr) => hdr.parse().expect("can't parse number"),
+            None => 100,
+        };
+        let mut buf_len = 0usize;
+        let mut buffer: Vec<u8> = Vec::with_capacity(expected_len);
+        let mut reader = resp.into_reader();
+        let bar = ProgressBar::new(expected_len as u64);
+        bar.set_message("Downloading");
+        bar.set_style(
+            ProgressStyle::with_template(&custom_dl_format(
+                term_size() - ((term_size() * 2) / 3) + 6,
+            ))
+            .unwrap()
+            .progress_chars("=> "),
+        );
+        bar.set_message(format!("Downloading: {}", &self.input.as_str()));
+
+        // response
+        let mut dest: (File, PathBuf) = {
+            let extension = &PathBuf::from(&self.input.to_string())
+                .extension()
+                .expect("a file extension present")
+                .to_string_lossy()
+                .to_string();
+            let fname = tmp_dir.path().with_extension(extension);
+            loop {
+                // Grow our buffer, read to it, and store the number of written bytes
+                // Note that we won't always read exactly CHUNK_SIZE bytes, so sometimes we
+                buffer.extend_from_slice(&[0; CHUNK_SIZE]);
+                let chunk = &mut buffer.as_mut_slice()[buf_len..buf_len + CHUNK_SIZE];
+                let read_bytes = reader.read(chunk).expect("error reading stream");
+                buf_len += read_bytes;
+
+                bar.set_position(buf_len as u64);
+
+                // Break if our stream is empty
+                if read_bytes == 0 {
+                    break;
+                }
+            }
+            (
+                File::create(&fname).expect("failed to create tempdir"),
+                fname,
+            )
+        };
+        buffer.truncate(buf_len);
+        copy(&mut Cursor::new(buffer), &mut dest.0).expect("failed to copy byes to temp dir");
+        if !&dest.1.exists() {
+            return Err(BalesError::NoFileExists(
+                dest.1,
+                "Downloaded file".to_string(),
+            ));
+        }
+        Ok(BalesDecompress {
+            input: dest.1.clone(),
+            output: self.output.clone(),
+            archive: archive_type(&dest.1)?,
+        })
+    }
+}
+
+- tar.rs
+use crate::archive::utils::*;
+use crate::archive::{BalesCompress, BalesDecompress};
+use anyhow::{Context, Result};
+use ewsc::success;
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use indicatif::{ProgressBar, ProgressStyle};
+use owo_colors::OwoColorize;
+use std::fs;
+use std::io::Seek;
+use std::{fs::File, path::Path};
+use tar::Archive;
+use walkdir::WalkDir;
+
+impl BalesCompress {
+    pub fn into_tar(&self) -> Result<()> {
+        // progress bar
+        let total_files = self
+            .input
+            .iter()
+            .map(|path| total_files(path))
+            .sum::<usize>();
+        let bar = ProgressBar::new(total_files as u64);
+
+        bar.set_style(
+            ProgressStyle::with_template(&custom_format(term_size() - ((term_size() * 2) / 3) + 6))
+                .unwrap()
+                .progress_chars("=> "),
+        );
+
+        let tarball = File::create(&self.output).expect("Failed to create tarball");
+        let enc = GzEncoder::new(tarball, Compression::fast());
+        let mut tar = tar::Builder::new(enc);
+        for items in &self.input {
+            let path = Path::new(items);
+            if path.is_file() {
+                let mut file = File::open(path).context("failed to open file")?;
+                tar.append_file(path, &mut file)?;
+                bar.inc(1);
+            } else if path.is_dir() {
+                for entry in WalkDir::new(items) {
+                    let entry = entry?;
+                    let path = entry.path();
+                    let mut file = File::open(path).context("failed to open file")?;
+                    if file.metadata()?.is_file() {
+                        tar.append_file(path, &mut file)
+                            .context("failed to add file to tar")?;
+                    }
+                    bar.inc(1);
+                }
+            }
+        }
+        bar.finish();
+        success!(
+            "Created zip archive at: {}",
+            &self
+                .output
+                .canonicalize()
+                .expect("failed to canoncalize path")
+                .display()
+                .underline()
+                .green()
+        );
+
+        Ok(())
+    }
+}
+
+impl BalesDecompress {
+    pub fn from_tar(&self) -> Result<()> {
+        let input = &self.input;
+        let mut tar_gz = File::open(input)?;
+        let tar = GzDecoder::new(&tar_gz);
+        let mut archive = Archive::new(tar);
+        // if output not exists!
+        if !&self.output.exists() {
+            fs::create_dir(&self.output).context("failed to create output")?;
+        }
+        // total archive
+        let total = archive.entries()?.count();
+        println!("{}", total);
+        // create bar
+        let bar = ProgressBar::new(total as u64);
+
+        bar.set_style(
+            ProgressStyle::with_template(&custom_format(term_size() - ((term_size() * 2) / 3) + 6))
+                .unwrap()
+                .progress_chars("=> "),
+        );
+        // set file to begining
+        tar_gz.seek(std::io::SeekFrom::Start(0))?;
+        // re init archive
+        let tar = GzDecoder::new(tar_gz);
+        let mut archive = Archive::new(tar);
+        //
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            // set bar message as
+            bar.set_message(format!(
+                "\n extracting: {}",
+                &entry.path()?.file_name().unwrap().to_str().unwrap()
+            ));
+            bar.inc(1);
+            if !entry.unpack_in(&self.output).context("LINE: 73")? {
+                panic!("error: sketchy tar tried to unpack outside its root.")
+            }
+        }
+        bar.finish();
+        success!(
+            "Unpacked archive at: {}",
+            &self
+                .output
+                .canonicalize()
+                .expect("failed to canoncalize path")
+                .display()
+                .underline()
+                .green()
+        );
+
+        Ok(())
+    }
+}
+
+- zip.rs
+use crate::archive::utils::*;
+use owo_colors::OwoColorize;
+use zip::ZipArchive;
+
+use crate::archive::{BalesCompress, BalesDecompress};
+use anyhow::Context;
+use anyhow::Result;
+use ewsc::success;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::io::Cursor;
+use std::{fs::File, io, path::Path};
+use walkdir::WalkDir;
+use zip::write::FileOptions;
+
+impl BalesCompress {
+    pub fn into_zip(&self) -> Result<()> {
+        // progress bar
+        let total_files = self
+            .input
+            .iter()
+            .map(|path| total_files(path))
+            .sum::<usize>();
+        let bar = ProgressBar::new(total_files as u64);
+        bar.set_style(
+            ProgressStyle::with_template(&custom_format(term_size() - ((term_size() * 2) / 3) + 6))
+                .unwrap()
+                .progress_chars("=> "),
+        );
+        // zip
+        let zip_file = File::create(&self.output)?;
+        let options = FileOptions::default().compression_method(zip::CompressionMethod::Bzip2);
+
+        let mut zip = zip::write::ZipWriter::new(zip_file);
+
+        for items in &self.input {
+            let path = Path::new(items);
+            if path.is_file() {
+                add_files_to_zip(&mut zip, path, options)?;
+                bar.inc(1);
+            } else if path.is_dir() {
+                for entry in WalkDir::new(items) {
+                    let entry = entry?;
+                    let path = entry.path();
+                    add_files_to_zip(&mut zip, path, options)?;
+                    bar.inc(1);
+                }
+            }
+        }
+        bar.finish();
+        success!(
+            "Created zip archive at: {}",
+            &self
+                .output
+                .canonicalize()
+                .expect("failed to canoncalize path")
+                .display()
+                .underline()
+                .green()
+        );
+        Ok(())
+    }
+}
+
+fn add_files_to_zip<W>(
+    zip: &mut zip::write::ZipWriter<W>,
+    file_path: &Path,
+    options: FileOptions,
+) -> Result<(), io::Error>
+where
+    W: io::Write + io::Seek,
+{
+    if file_path.is_file() {
+        let relative_path = file_path.strip_prefix(".").unwrap_or(file_path);
+        zip.start_file(relative_path.to_str().unwrap(), options)?;
+        let mut file = File::open(file_path)?;
+        io::copy(&mut file, zip)?;
+    }
+    Ok(())
+}
+
+// decompress
+impl BalesDecompress {
+    pub fn from_zip(&self) -> Result<()> {
+        let input = &self
+            .input
+            .canonicalize()
+            .expect("failed to canonicalize path");
+        //
+        let archive = std::fs::read(input)
+            .context("error reading zip file contents")
+            .expect("failed to read zip archive");
+
+        let mut zip = ZipArchive::new(Cursor::new(archive))?;
+        let total = zip.len();
+        // create bar
+        let bar = ProgressBar::new(total as u64);
+        bar.set_style(
+            ProgressStyle::with_template(&custom_format(term_size() - ((term_size() * 2) / 3) + 6))
+                .unwrap()
+                .progress_chars("=> "),
+        );
+
+        for i in 0..zip.len() {
+            bar.inc(1);
+            let mut file = zip.by_index(i).unwrap();
+            bar.set_message(format!("\n extracting: {}", file.name()));
+
+            let output_path = Path::new(&self.output);
+
+            if file.name().ends_with('/') {
+                std::fs::create_dir_all(output_path.join(file.name()))?;
+            } else {
+                let mut output_file = File::create(output_path.join(file.name()))?;
+
+                std::io::copy(&mut file, &mut output_file)?;
+            }
+        }
+        // // zip_extract::extract(Cursor::new(archive), &self.output, false)
+        //     .context("failed to extract contents of zip")?;
+        bar.finish();
+        success!(
+            "Unpacked archive at: {}",
+            &self
+                .output
+                .canonicalize()
+                .expect("failed to canoncalize path")
+                .display()
+                .underline()
+                .green()
+        );
+
+        Ok(())
+    }
+}
+
+- mod.rs
+mod tar;
+mod zip;
+
+- bales_compress.rs
+use super::{archive_type, Archive, BalesCompress, BalesError};
+use owo_colors::OwoColorize;
+
+use anyhow::Result;
+use std::path::PathBuf;
+
+impl BalesCompress {
+    pub fn parse(
+        mut input: Vec<PathBuf>,
+        output: PathBuf,
+        force: bool,
+    ) -> Result<Self, BalesError> {
+        // check output extension
+        if output.extension().is_none() {
+            return Err(BalesError::NoFileExtension((
+                input
+                    .iter()
+                    .map(|path| path.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                output.display().to_string(),
+                "compress".to_string(),
+            )));
+        }
+        // check path validity
+        input.retain(|path| {
+            if !path.exists() {
+                ewsc::warning!(
+                    "path: '{}' Does not exist proceeding without it!",
+                    path.display()
+                );
+            }
+            path.exists()
+        });
+
+        // make sure output path does not exist
+        if !force && output.exists() {
+            return Err(BalesError::FileExists(output, "output".to_string()));
+        }
+
+        Ok(Self {
+            input,
+            output: output.clone(),
+            archive: archive_type(&output)?,
+        })
+    }
+    pub fn match_type(&self) -> Result<()> {
+        match &self.archive {
+            Archive::Tar => self.into_tar()?,
+            Archive::Zip => self.into_zip()?,
+        };
+        Ok(())
+    }
+}
+
+- bales_decompress.rs
+use super::{archive_type, Archive, BalesDecompress, BalesError};
+use anyhow::Result;
+use std::path::PathBuf;
+
+impl BalesDecompress {
+    pub fn parse(input: PathBuf, output: Option<PathBuf>) -> Result<Self, BalesError> {
+        // check input validity
+
+        // generate assumed output for example input = foo.tar.gz -> output: ./foo/
+
+        let file_stem_str = input
+            .file_stem()
+            .expect("file has no name!")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let file_stem = if file_stem_str.ends_with(".tar") {
+            &file_stem_str[..file_stem_str.len() - 4]
+        } else {
+            &file_stem_str
+        };
+        let output = output.unwrap_or(PathBuf::from(file_stem));
+        // handle error for no file extension on input
+        let i_extension = input.extension();
+        if i_extension.is_none() {
+            return Err(BalesError::NoFileExtension((
+                input.display().to_string(),
+                output.display().to_string(),
+                "extract".to_string(),
+            )));
+        }
+        // make sure input exists!
+        if !input.exists() {
+            return Err(BalesError::NoFileExists(input, "archive".to_string()));
+        }
+
+        Ok(Self {
+            input: input.clone(),
+            output,
+            archive: archive_type(&input)?,
+        })
+    }
+    pub fn match_type(&self) -> Result<()> {
+        match &self.archive {
+            Archive::Tar => self.from_tar()?,
+            Archive::Zip => self.from_zip()?,
+        };
+        Ok(())
+    }
+}
+
+- bales_error.rs
+use super::BalesError;
+use crate::archive::Archive;
+use std::fmt;
+use strum::VariantNames;
+impl fmt::Display for BalesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use owo_colors::OwoColorize;
+        match self {
+            Self::NoFileExtension((input, output, command)) => {
+                let cmd = if command == "pkg" {
+                    format!(
+                        "{} bales {} {} -o {}",
+                        "x".red().bold(),
+                        command,
+                        input,
+                        output.underline().red()
+                    )
+                } else {
+                    format!(
+                        "{} bales {} {} -o {}",
+                        "x".red().bold(),
+                        command,
+                        input.underline().red(),
+                        output
+                    )
+                };
+                let fixed_cmd = if command == "pkg" {
+                    format!(
+                        "{} bales {} {} -o {}",
+                        "".green().bold(),
+                        command,
+                        input,
+                        (output.to_owned() + ".tar.gz").underline().green()
+                    )
+                } else {
+                    format!(
+                        "{} bales {} {} -o {}",
+                        "".green().bold(),
+                        command,
+                        (input.to_owned() + ".tar.gz").underline().green(),
+                        output,
+                    )
+                };
+                write!(
+                    f,
+                    "\n{}  {}\n   {}\n    {}\n   {}\n    {}",
+                    "󱞪".bold(),
+                    "No file extension specified!".red().bold(),
+                    "Your command: ".bold(),
+                    cmd,
+                    "correct usage (example): ".bold(),
+                    fixed_cmd,
+                )
+            }
+            Self::FileExists(path, input) => {
+                let format = format!(
+                    "{} {} {}\n   {} {}",
+                    format!("Path specified as {}:", input).bold().red(),
+                    path.display().underline(),
+                    "exists!".red().bold(),
+                    "".green().bold(),
+                    format!("Specify a {} path that does not exist!", input).bold(),
+                );
+                write!(f, "\n{}  {}", "󱞪".bold(), format)
+            }
+            Self::NoFileExists(path, input) => {
+                let format = format!(
+                    "{} {} {}\n   {} {}",
+                    format!("Path specified as {}:", input).bold().red(),
+                    path.display().underline(),
+                    "does not exists!".red().bold(),
+                    "".green().bold(),
+                    format!("Specify a {} path that exists!", input).bold(),
+                );
+                write!(f, "\n{}  {}", "󱞪".bold(), format)
+            }
+            Self::UnknownArchiveType(extension) => {
+                write!(
+                    f,
+                    "\n{}  {} .{}\n   {}\n{}",
+                    "󱞪".bold(),
+                    "Unknown compression format:".red().bold(),
+                    extension.underline(),
+                    "Available Formats".bold(),
+                    Archive::VARIANTS
+                        .to_vec()
+                        .iter()
+                        .map(|item| format!("  - {}", item))
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                )
+            }
+            Self::RelativeUrlWithoutBase(url) => {
+                write!(
+                    f,
+                    "\n{}  {}\n   {}\n    {}\n   {}\n    {}{}",
+                    "󱞪".bold(),
+                    "No url base specified!".red().bold(),
+                    "url entered: ".bold(),
+                    url.red().underline(),
+                    "correct usage (example): ".bold(),
+                    "https://".green().underline(),
+                    url,
+                )
+            }
+            Self::InvalidChar(char) => {
+                let format = format!(
+                    "{} \n   {}",
+                    "One or more invalid characters were present in: "
+                        .bold()
+                        .red(),
+                    char.underline()
+                );
+                write!(f, "\n{}  {}", "󱞪".bold(), format)
+            }
+            Self::NoOutputSpecified(input) => {
+                let command = format!("{} bales extract --url {}", "x".red().bold(), input,);
+                let fixed = format!(
+                    "{} bales extract --url {} -o {}",
+                    "".green().bold(),
+                    input,
+                    "example.tar.gz".green().underline(),
+                );
+                write!(
+                    f,
+                    "\n{}  {}\n   {}\n    {}\n   {}\n    {}",
+                    "󱞪".bold(),
+                    "No output specified!".red().bold(),
+                    "Your command: ".bold(),
+                    command,
+                    "correct usage (example): ".bold(),
+                    fixed,
+                )
+            }
+        }
+    }
+}
+
+- mod.rs
+use std::path::PathBuf;
+use thiserror::Error;
+
+mod bales_error;
+#[derive(Error, Debug)]
+pub enum BalesError {
+    NoFileExtension((String, String, String)),
+    FileExists(PathBuf, String),
+    NoFileExists(PathBuf, String),
+    UnknownArchiveType(String),
+    RelativeUrlWithoutBase(String),
+    InvalidChar(String),
+    NoOutputSpecified(String),
+}
+
+- lib.rs
+#![feature(io_error_more)]
+pub mod archive;
+pub mod cli;
+pub mod error;
+pub mod update;
+
+- mod.rs
+use url::Url;
+mod updater;
+pub struct Updater {
+    pub url: Url,
+}
+
+- updater.rs
+use core::panic;
+
+use super::Updater;
+use anyhow::{Context, Result};
+use ewsc::{success, warning};
+use owo_colors::OwoColorize;
+use serde::Deserialize;
+use url::Url;
+use version_compare::Version;
+
+#[derive(Deserialize)]
+struct CargoToml {
+    package: Package,
+}
+#[derive(Deserialize)]
+struct Package {
+    version: String,
+}
+impl Updater {
+    pub fn is_internet() -> bool {
+        use std::net::TcpStream;
+        TcpStream::connect("209.85.233.101:80").is_ok()
+    }
+    pub fn parse(url: impl Into<String>) -> Self {
+        let url = url.into();
+        let url = match Url::parse(&url) {
+            Ok(url) => url,
+            Err(e) => panic!("failed to parse url: {}", e),
+        };
+
+        Self { url }
+    }
+    pub fn is_outdated(&self) -> Result<bool> {
+        // get versions
+        let local_version = env!("CARGO_PKG_VERSION");
+        let remote_version = ureq::builder()
+            .redirects(5)
+            .build()
+            .get(self.url.as_str())
+            .call()
+            .context("failed to send request to server")?;
+        let remote_version: CargoToml = toml::from_str(&remote_version.into_string()?)?;
+        // parse into Version,
+        let local_version = Version::from(local_version);
+        let remote_version = Version::from(&remote_version.package.version);
+        if local_version < remote_version {
+            return Ok(true);
+        }
+        Ok(false)
+    }
+    pub fn print_version(&self) -> Result<()> {
+        let local_version = env!("CARGO_PKG_VERSION");
+        let remote_version = ureq::builder()
+            .redirects(5)
+            .build()
+            .get(self.url.as_str())
+            .call()
+            .context("failed to send request to server")?;
+        let remote_version: CargoToml = toml::from_str(&remote_version.into_string()?)?;
+        // parse into Version,
+        let local_version = Version::from(local_version);
+        let remote_version = Version::from(&remote_version.package.version);
+        if local_version < remote_version {
+            warning!("program is out of date:");
+            warning!(
+                "local version: {} < remote_version: {}",
+                &local_version.unwrap(),
+                &remote_version.unwrap()
+            );
+        } else {
+            success!("program is up to date:");
+            success!("bales version: {}", &local_version.unwrap())
+        }
+        Ok(())
+    }
+}
+
+- handler.rs
+use crate::update::Updater;
+use anyhow::Result;
+use core::panic;
+use ewsc::warning;
+use owo_colors::OwoColorize;
+
+use super::{Arguments, Subcommands};
+use crate::archive::{BalesCompress, BalesDecompress};
+const PKG_URL: &str = "https://raw.githubusercontent.com/Phant80m/bales/main/Cargo.toml";
+impl Arguments {
+    pub fn handle(self) -> Result<()> {
+        if self.version {
+            Updater::parse(PKG_URL).print_version().unwrap();
+            std::process::exit(0)
+        }
+
+        match self.subcommand {
+            Some(Subcommands::Package {
+                input,
+                output,
+                force,
+            }) => {
+                BalesCompress::parse(input, output, force)?.match_type()?;
+            }
+            Some(Subcommands::UnPackage { url, input, output }) => {
+                if !url {
+                    BalesDecompress::parse(input, output)?.match_type()?;
+                } else {
+                    BalesDecompress::parse_url(input, output)?
+                        .download()?
+                        .match_type()?;
+                }
+            }
+            None => panic!("Unknown command"),
+        }
+        if Updater::is_internet() && Updater::parse(PKG_URL).is_outdated().unwrap() {
+            warning!("program out of date! Please update to the latest version");
+        }
+        Ok(())
+    }
+}
+
+- mod.rs
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+mod handler;
+
+#[derive(Parser, Debug)]
+pub struct Arguments {
+    #[clap(short, long)]
+    version: bool,
+    #[command(subcommand)]
+    subcommand: Option<Subcommands>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Subcommands {
+    /// compress files / dir into a tar / zip
+    #[clap(name = "compress")]
+    Package {
+        input: Vec<PathBuf>,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(short, long)]
+        // force override output
+        force: bool,
+    },
+    /// extract the contents of a tar / zip
+    #[clap(name = "extract")]
+    UnPackage {
+        #[arg(long, short)]
+        url: bool,
+        input: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+}
+
+- main.rs
+use bales::cli::Arguments;
+use clap::Parser;
+fn main() -> anyhow::Result<()> {
+    Arguments::parse().handle()?;
+    Ok(())
+}
+

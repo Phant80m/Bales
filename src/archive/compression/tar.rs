@@ -101,7 +101,7 @@ impl BalesDecompress {
             ));
             bar.inc(1);
             if !entry.unpack_in(&self.output).context("LINE: 73")? {
-                eprintln!("error: sketchy tar tried to unpack outside its root.")
+                panic!("error: sketchy tar tried to unpack outside its root.")
             }
         }
         bar.finish();
